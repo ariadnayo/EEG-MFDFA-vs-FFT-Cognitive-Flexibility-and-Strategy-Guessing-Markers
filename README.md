@@ -7,10 +7,10 @@
 
 **Methodology**
 - Dataset: Analyzed 60 EEG recordings from 20 participants across three critical stages: post-transitive inference task, post-sleep (short-term), and one-week follow-up (long-term).
--   Pipeline: End-to-end processing performed in Python, including:
--   Advanced EEG pre-processing and artifact rejection.
--   Behavioral statistical analysis.
--   Implementation of MFDFA to extract multifractal scaling exponents.
+- Pipeline: End-to-end processing performed in Python, including:
+- Advanced EEG pre-processing and artifact rejection.
+- Behavioral statistical analysis.
+- Implementation of MFDFA to extract multifractal scaling exponents.
 - Comparative Scope: A side-by-side evaluation of signal complexity markers versus classic Fast-Fourier Transform (FFT) features.
 
 **Key Areas of Investigation**
