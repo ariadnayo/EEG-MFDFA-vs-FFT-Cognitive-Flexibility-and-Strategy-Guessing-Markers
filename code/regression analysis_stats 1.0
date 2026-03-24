@@ -1,0 +1,181 @@
+# Regression analysis + stats 1.0
+# If we want to assess MI effect upon accuracy
+df_statistics = df.iloc[:, [0, 10, 1]]
+my_palette = ["#E15B64", "#4DDDE0", "#ABBD83", "#BEBEBE", "#FBB26D", "#A9C9D7"]
+import warnings
+warnings.filterwarnings("ignore")
+
+if len(df_statistics.columns) == 3:
+    col_type = df_statistics.iloc[:, 2].dropna().apply(lambda x: isinstance(x, (int, float))).all()
+
+    if col_type:
+        participant = df_statistics.columns[0]
+        y_var = df_statistics.columns[1]
+        x_var = df_statistics.columns[2]
+
+        df_statistics = df_statistics.groupby(participant, as_index=False).agg({
+            x_var: "mean",
+            y_var: "mean"
+        })
+
+        def mahalanobis_distance(df, cols):
+            cov_matrix = np.cov(df[cols].T)
+            inv_cov_matrix = np.linalg.inv(cov_matrix)
+            mean_vals = df[cols].mean().values
+            return df[cols].apply(lambda row: mahalanobis(row.values, mean_vals, inv_cov_matrix), axis=1)
+
+        df_statistics["mahal_dist"] = mahalanobis_distance(df_statistics, [x_var, y_var])
+        threshold = np.percentile(df_statistics["mahal_dist"], 66)
+        df_selected = df_statistics[df_statistics["mahal_dist"] <= threshold].copy()
+        df_selected["mahal_dist"] = mahalanobis_distance(df_selected, [x_var, y_var])
+
+        cov = np.cov(df_selected[[x_var, y_var]].T)
+        mean_x, mean_y = df_selected[x_var].mean(), df_selected[y_var].mean()
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        angle = np.degrees(np.arctan2(*eigvecs[:, 0][::-1]))
+        width, height = 2 * np.sqrt(chi2.ppf(0.95, 2) * eigvals)
+
+        X = df_statistics[[x_var]].values
+        y = df_statistics[y_var].values
+        X_pred = np.linspace(X.min(), X.max(), 100).reshape(-1, 1)
+
+        models = {
+            "OLS representation": {
+                "model": LinearRegression(),
+                "style": {"linestyle": "-", "label": "OLS"}
+            },
+            "RANSAC representation": {
+                "model": RANSACRegressor(),
+                "style": {"linestyle": "dotted", "label": "RANSAC"}
+            },
+            "Theil Sen representation": {
+                "model": TheilSenRegressor(),
+                "style": {"linestyle": "dashed", "label": "Theil-Sen"}
+            }
+        }
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        color = my_palette[0]
+
+        for ax, (title, config) in zip(axes, models.items()):
+            model = config["model"]
+            model.fit(X, y)
+            y_pred = model.predict(X_pred)
+
+            inliers = df_statistics[df_statistics["mahal_dist"] <= threshold]
+            outliers = df_statistics[df_statistics["mahal_dist"] > threshold]
+
+
+            sns.scatterplot(data=inliers, x=x_var, y=y_var, color=color, edgecolor="black", ax=ax)
+            ax.scatter(
+                outliers[x_var],
+                outliers[y_var],
+                color=color,
+                marker="x",
+                s=40,
+                label="Outlier"
+            )
+
+            ax.plot(X_pred, y_pred, color=color, linestyle=config["style"]["linestyle"], linewidth=0.8)
+            x_pad = 0.05 * (df_statistics[x_var].max() - df_statistics[x_var].min())
+            y_pad = 0.05 * (df_statistics[y_var].max() - df_statistics[y_var].min())
+            ax.set_xlim(df_statistics[x_var].min() - x_pad, df_statistics[x_var].max() + x_pad)
+            ax.set_ylim(df_statistics[y_var].min() - y_pad, df_statistics[y_var].max() + y_pad)
+
+            ax.set_xlabel(x_var)
+            ax.set_ylabel(y_var)
+
+            sns.despine(ax=ax, top=True, right=True, trim=True)
+
+        handles = [
+            plt.Line2D([], [], color=color, linestyle="-", label="OLS"),
+            plt.Line2D([], [], color=color, linestyle="dotted", label="RANSAC"),
+            plt.Line2D([], [], color=color, linestyle="dashed", label="Theil-Sen"),
+        ]
+        axes[-1].legend(handles=handles, title="Model", loc="upper right")
+
+        plt.tight_layout()
+        plt.show()
+
+
+        # TEST PCC - regression linéaire
+
+        X_ols = sm.add_constant(X)
+        model_ols = sm.OLS(y, X_ols).fit()
+        r2_ols = model_ols.rsquared
+        n = X.shape[0]
+        p = X.shape[1]
+
+        adjusted_r2_ols = 1 - ((1 - r2_ols) * (n - 1)) / (n - p - 1)
+        df_model = int(model_ols.df_model)
+        df_resid = int(model_ols.df_resid)
+
+        f_stat = model_ols.fvalue
+        f_pvalue = model_ols.f_pvalue
+        f_squared = r2_ols / (1 - r2_ols) if r2_ols < 1 else 999
+
+        power_analysis = FTestPower()
+        power = power_analysis.power(effect_size=f_squared, df_num=df_model, df_denom=df_resid, alpha=0.05)
+
+        n_iterations = 1000
+        r2_adj_bootstrap = []
+
+        for _ in range(n_iterations):
+            X_sample, y_sample = resample(X, y, replace=True)
+            X_sample_ols = sm.add_constant(X_sample)
+            model_sample = sm.OLS(y_sample, X_sample_ols).fit()
+
+            n_boot = X_sample.shape[0]
+            p_boot = X_sample.shape[1]
+            r2_boot = model_sample.rsquared
+            r2_adj = 1 - ((1 - r2_boot) * (n_boot - 1)) / (n_boot - p_boot - 1)
+            r2_adj_bootstrap.append(r2_adj)
+
+        ci_lower_adj_r2 = np.percentile(r2_adj_bootstrap, 2.5)
+        ci_upper_adj_r2 = np.percentile(r2_adj_bootstrap, 97.5)
+
+        ransac = RANSACRegressor()
+        ransac.fit(X, y)
+        y_pred_ransac = ransac.predict(X)
+
+        theil_sen = TheilSenRegressor()
+        theil_sen.fit(X, y)
+        y_pred_theil = theil_sen.predict(X)
+
+        mse_ols = mean_squared_error(y, model_ols.predict(X_ols))
+        rmse_ols = np.sqrt(mse_ols)
+
+        mse_ransac = mean_squared_error(y, y_pred_ransac)
+        rmse_ransac = np.sqrt(mse_ransac)
+
+        mse_theil = mean_squared_error(y, y_pred_theil)
+        rmse_theil = np.sqrt(mse_theil)
+
+        ss_total = np.sum((y - np.mean(y))**2)
+        ss_res_ransac = np.sum((y - y_pred_ransac)**2)
+        ss_res_theil = np.sum((y - y_pred_theil)**2)
+
+        r2_ransac = 1 - (ss_res_ransac / ss_total)
+
+        inliers_mask = ransac.inlier_mask_
+        n_total = len(y)
+        n_inliers = np.sum(inliers_mask)
+        inlier_ratio = n_inliers / n_total
+
+        r2_theil = 1 - (ss_res_theil / ss_total)
+
+        n_features = X.shape[1]
+        n_min = n_features + 1
+        n_samples = X.shape[0]
+        n_subsamples = min(300, comb(n_samples, n_min, exact=True))
+        robustness_index = n_subsamples / n_min
+
+        adjusted_r2_ransac = 1 - ((1 - r2_ransac) * (n - 1)) / (n - p - 1)
+        adjusted_r2_theil = 1 - ((1 - r2_theil) * (n - 1)) / (n - p - 1)
+
+        print("\nComparaison des modèles de régression :\n")
+        print(f"OLS :\nR²= {r2_ols:.3f}\nadj.R²= {adjusted_r2_ols:.3f}\ndf model= {df_model} | residual= {df_resid}\np-value= {f_pvalue:.3f}\npower= {power:.3f}\nF-statistic = {f_stat:.3f}\nRMSE = {rmse_ols:.3f}\nIC adj.R²(95%)=[{ci_lower_adj_r2:.3f}, {ci_upper_adj_r2:.3f}]")
+        print()
+        print(f"RANSAC:\nR²= {r2_ransac:.3f}\nR² ajusté = {adjusted_r2_ransac:.3f}\nRMSE = {rmse_ransac:.3f}\nInlier Ratio={inlier_ratio:.3f} ({n_inliers}/{n_total})")
+        print()
+        print(f"Theil-Sen:\nR²= {r2_theil:.3f}\nR² ajusté = {adjusted_r2_theil:.3f}\nRMSE = {rmse_theil:.3f}\nRobustness Index= {robustness_index:.1f}")
