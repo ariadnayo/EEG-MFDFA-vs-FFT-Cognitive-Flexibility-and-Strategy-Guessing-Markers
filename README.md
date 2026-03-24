@@ -1,8 +1,8 @@
 # EEG-MFDFA-vs-FFT-Cognitive-Flexibility-and-Strategy-Guessing-Markers
-Background
+**Background**
 - Cognitive flexibility — the ability to adapt strategies and infer new rules — is essential for navigating dynamic environments. Traditional EEG analysis methods often assume linearity and stationarity, which can overlook critical non-linear features of complex brain dynamics.
 
-***Objective**
+**Objective**
 - This research evaluates Multi-Fractal Detrended Fluctuation Analysis (MFDFA) as a novel approach to identify neuro-markers for strategy and rule-guessing. The study aims to determine if multifractal dynamics provide a more sensitive measure of cognitive adaptability than traditional spectral methods.
 
 **Methodology**
