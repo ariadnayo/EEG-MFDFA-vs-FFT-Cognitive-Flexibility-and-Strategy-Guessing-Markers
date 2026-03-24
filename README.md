@@ -1,0 +1,2 @@
+# EEG-MFDFA-vs-FFT-Cognitive-Flexibility-and-Strategy-Guessing-Markers
+Lumiere Research Program '25: Comparative analysis of EEG signals using MFDFA and classic FFT to identify neuro-markers for cognitive flexibility. Investigated if multifractal dynamics predict strategy and rule-guessing performance better than traditional spectral analysis. Includes signal preprocessing, feature selection, and model parsimony.
