@@ -1,0 +1,249 @@
+# Regression analysis + stats using a covariate 3.0
+# The solution for insomnia level effect upon accuracy by condition (TMR versus control)
+!pip install boruta
+!pip install pingouin
+!pip install python-docx
+
+import math
+import itertools
+import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
+import numpy as np
+import pandas as pd
+import random
+import seaborn as sns
+import scipy.stats as stats
+import statsmodels.api as sm
+import warnings
+
+
+from boruta import BorutaPy
+from docx import Document
+from itertools import combinations
+from math import isnan
+from matplotlib.colors import Normalize
+from matplotlib.cm import get_cmap
+from matplotlib.colors import LinearSegmentedColormap,to_hex
+from matplotlib.lines import Line2D
+from matplotlib.patches import Ellipse, Patch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from pingouin import compute_effsize, power_ttest
+from scipy.interpolate import griddata
+from scipy.stats import chi2, ttest_ind, pearsonr, ttest_rel, sem
+from scipy.spatial.distance import mahalanobis
+from scipy.special import comb, expit
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.compose import ColumnTransformer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LinearRegression, RANSACRegressor, TheilSenRegressor, LogisticRegression
+from sklearn.metrics import r2_score, mean_squared_error, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.utils import resample
+from statsmodels.stats.power import TTestIndPower, FTestPower
+from statsmodels.stats.stattools import durbin_watson
+from statsmodels.stats.anova import AnovaRM, anova_lm
+from statsmodels.formula.api import ols, mixedlm
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+from statsmodels.stats.multitest import multipletests
+# Removed extra spaces in column names - the only way it worked
+df.columns = df.columns.str.strip()
+
+# Copying to a new DataFrame
+df_statistics = df.copy()
+
+df_statistics = df.iloc[:, [0, 10, 5, 11]]
+my_palette = ["#E15B64", "#4DDDE0", "#ABBD83", "#BEBEBE", "#FBB26D", "#A9C9D7"]
+import warnings
+warnings.filterwarnings("ignore")
+
+if len(df_statistics.columns) == 4:
+    is_3_cont = df_statistics.iloc[:, 2].dropna().apply(lambda x: isinstance(x, (int, float))).all()
+    is_4_cont = df_statistics.iloc[:, 3].dropna().apply(lambda x: isinstance(x, (int, float))).all()
+
+    if (is_3_cont and not is_4_cont) or (not is_3_cont and is_4_cont):
+        print("Détection : 1 VI continue + 1 VI catégorielle multiclasses")
+
+        participant = df_statistics.columns[0]
+        y_var = df_statistics.columns[1]
+
+        if is_3_cont:
+            x_var = df_statistics.columns[2]
+            z_var = df_statistics.columns[3]
+        else:
+            x_var = df_statistics.columns[3]
+            z_var = df_statistics.columns[2]
+
+        # Regroupement
+        df_statistics = df_statistics.groupby([participant, z_var], as_index=False).agg({
+            x_var: "mean",
+            y_var: "mean"
+        })
+
+        z_order = sorted(df_statistics[z_var].unique())
+        palette_dict = dict(zip(z_order, my_palette))
+
+        def mahalanobis_distance(df, cols):
+            cov_matrix = np.cov(df[cols].T)
+            inv_cov_matrix = np.linalg.inv(cov_matrix)
+            mean_vals = df[cols].mean().values
+            return df[cols].apply(lambda row: mahalanobis(row.values, mean_vals, inv_cov_matrix), axis=1)
+
+        models = {
+            "OLS": {"model": LinearRegression(), "style": {"color": "red", "linestyle": "-", "label": "OLS"}},
+            "RANSAC": {"model": RANSACRegressor(), "style": {"color": "red", "linestyle": "dotted", "label": "RANSAC"}},
+            "Theil-Sen": {"model": TheilSenRegressor(), "style": {"color": "red", "linestyle": "dashed", "label": "Theil-Sen"}}
+        }
+
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+
+        for ax, (name, config) in zip(axes, models.items()):
+            for condition in z_order:
+                df_cond = df_statistics[df_statistics[z_var] == condition]
+
+                df_cond["mahal_dist"] = mahalanobis_distance(df_cond, [x_var, y_var])
+                threshold = np.percentile(df_cond["mahal_dist"], 66)
+                df_sel = df_cond[df_cond["mahal_dist"] <= threshold].copy()
+
+                inliers = df_cond[df_cond["mahal_dist"] <= threshold]
+                outliers = df_cond[df_cond["mahal_dist"] > threshold]
+                ax.scatter(inliers[x_var], inliers[y_var],
+                           c=palette_dict[condition],
+                           edgecolor="black", linewidth=0.5,
+                           alpha=1, s=40,
+                           label=f"{z_var}={condition}")
+                ax.scatter(outliers[x_var], outliers[y_var],
+                           c=palette_dict[condition],
+                           marker="x", linewidth=1, s=120,
+                           label=f"{z_var}={condition} outlier")
+
+                if len(df_cond[x_var].unique()) < 2:
+                    continue
+
+                X_c = df_cond[[x_var]].values
+                y_c = df_cond[y_var].values
+                X_pred_c = np.linspace(X_c.min(), X_c.max(), 100).reshape(-1, 1)
+
+                model = config["model"]
+                model.fit(X_c, y_c)
+                y_pred_c = model.predict(X_pred_c)
+
+                ax.plot(X_pred_c, y_pred_c,
+                        color=palette_dict[condition],
+                        linestyle=config["style"]["linestyle"],
+                        linewidth=0.8)
+
+                ax.scatter(df_cond[x_var], df_cond[y_var],
+                           c=palette_dict[condition],
+                           edgecolor="black", linewidth=0.5,
+                           alpha=1, s=40,
+                           label=f"{z_var}={condition}")
+
+            ax.set_xlabel(x_var)
+            if ax == axes[0]:
+                ax.set_ylabel(y_var)
+            ax.set_title(name)
+            sns.despine(ax=ax)
+
+        handles = [
+            plt.Line2D([], [], color="red", linestyle="-", label="OLS"),
+            plt.Line2D([], [], color="red", linestyle="dotted", label="RANSAC"),
+            plt.Line2D([], [], color="red", linestyle="dashed", label="Theil-Sen")
+        ] + [
+            plt.Line2D([], [], marker='o', linestyle='', color=palette_dict[val],
+                       label=f"{z_var}={val}", markeredgecolor="black", markersize=7)
+            for val in z_order
+        ]
+        axes[-1].legend(handles=handles, loc="upper right")
+        sns.despine(offset=2, trim=True)
+        plt.tight_layout()
+        plt.show()
+
+
+# TEST STATISTIQUE - ANCOVA
+#I have no idea why it didn't work, but atleast now it works
+df_statistics = df_statistics.groupby([participant, z_var], as_index=False).agg({
+    x_var: "mean",
+    y_var: "mean"
+})
+is_repeated = df_statistics.groupby(participant)[x_var].nunique().max() > 1
+# Corrected formula with backticks for column names - changed
+# Wrapped the dependent variable in Q() - changed
+formula = f'Q("{y_var}") ~ Q("{x_var}") + Q("{z_var}")'
+
+model = ols(formula, data=df_statistics).fit()
+aov_table = anova_lm(model, typ=2)
+aov_table["eta²"] = aov_table["sum_sq"] / sum(aov_table["sum_sq"])
+print(aov_table)
+
+modalities = df_statistics[z_var].unique()
+if len(modalities) > 1:
+    from itertools import combinations
+    comparisons = list(combinations(modalities, 2))
+    p_vals, labels = [], []
+
+    for a, b in comparisons:
+        group1 = df_statistics[df_statistics[z_var] == a][y_var]
+        group2 = df_statistics[df_statistics[z_var] == b][y_var]
+        t_stat, p_val = ttest_ind(group1, group2, equal_var=False)
+        p_vals.append(p_val)
+        labels.append((a, b))
+
+    method = "bonferroni" if len(comparisons) > 2 else "holm"
+    reject, pvals_corr, _, _ = multipletests(p_vals, method=method)
+
+    found_significant = False
+
+    for (a, b), p_raw, p_adj, keep in zip(labels, p_vals, pvals_corr, reject):
+        if keep:
+            found_significant = True
+            print(f"{z_var} ({a} vs {b}) - raw p = {p_raw:.3f}, corrected p = {p_adj:.3f} [{method}]")
+
+    if not found_significant:
+        print("Aucune comparaison post-hoc significative détectée.")
+        #Changed, such a drama queen actually
+        x_var_q = f'Q("{x_var}")'
+        p_val_x = aov_table.loc[x_var_q, "PR(>F)"]
+        if p_val_x < 0.05:
+            print("\nEffet continu détecté: test de régression linéaire effectué)\n")
+
+            X = df_statistics[[x_var]].values
+            y = df_statistics[y_var].values
+
+            X_ols = sm.add_constant(X)
+            model_ols = sm.OLS(y, X_ols).fit()
+            r2_ols = model_ols.rsquared
+            n, p = X.shape
+
+            adjusted_r2_ols = 1 - ((1 - r2_ols) * (n - 1)) / (n - p - 1)
+            df_model = int(model_ols.df_model)
+            df_resid = int(model_ols.df_resid)
+            f_stat = model_ols.fvalue
+            f_pvalue = model_ols.f_pvalue
+
+            f_squared = r2_ols / (1 - r2_ols) if r2_ols < 1 else 999
+            power_analysis = FTestPower()
+            power = power_analysis.power(effect_size=f_squared, df_num=df_model, df_denom=df_resid, alpha=0.05)
+
+            # Bootstrap pour l'IC de R² ajusté
+            r2_adj_bootstrap = []
+            for _ in range(1000):
+                X_sample, y_sample = resample(X, y, replace=True)
+                X_sample_ols = sm.add_constant(X_sample)
+                model_sample = sm.OLS(y_sample, X_sample_ols).fit()
+                n_boot, p_boot = X_sample.shape
+                r2_boot = model_sample.rsquared
+                r2_adj = 1 - ((1 - r2_boot) * (n_boot - 1)) / (n_boot - p_boot - 1)
+                r2_adj_bootstrap.append(r2_adj)
+
+            ci_lower_adj_r2 = np.percentile(r2_adj_bootstrap, 2.5)
+            ci_upper_adj_r2 = np.percentile(r2_adj_bootstrap, 97.5)
+
+            print(f"OLS:\nR² = {r2_ols:.3f}\nadj.R² = {adjusted_r2_ols:.3f}")
+            print(f"df model = {df_model} | residual = {df_resid}")
+            print(f"p-value = {f_pvalue:.3f} | power = {power:.3f} | F = {f_stat:.3f}")
+            print(f"RMSE = {np.sqrt(mean_squared_error(y, model_ols.predict(X_ols))):.3f}")
+            print(f"IC adj.R² (95%) = [{ci_lower_adj_r2:.3f}, {ci_upper_adj_r2:.3f}]")
