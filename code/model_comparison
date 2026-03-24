@@ -1,0 +1,52 @@
+# Model Comparison
+top3_vars = feature_importance[feature_importance['Selected']].sort_values(by='Rank').head(3)['Feature'].tolist()
+
+# 2. Créer toutes les combinaisons possibles (1 à 3 variables)
+all_models = []
+for k in range(1, len(top3_vars)+1):
+    for combo in itertools.combinations(top3_vars, k):
+        all_models.append(list(combo))
+
+# 3. Encodage complet (déjà fait précédemment)
+X_all_encoded_df = pd.DataFrame(X_encoded, columns=feature_names)
+
+# 4. Calcul R² ajusté et Cp
+model_stats = []
+n = len(y)
+full_model = sm.OLS(y, sm.add_constant(X_all_encoded_df[top3_vars])).fit()
+sigma2 = full_model.mse_resid
+
+for vars_ in all_models:
+    X_subset = sm.add_constant(X_all_encoded_df[vars_])
+    model = sm.OLS(y, X_subset).fit()
+    p = X_subset.shape[1]
+    RSS = ((model.resid) ** 2).sum()
+    Cp = RSS / sigma2 - (n - 2 * p)
+    model_stats.append({
+        'Variables': ', '.join(vars_),
+        'R2_adj': model.rsquared_adj,
+        'Cp': Cp
+    })
+
+df_models = pd.DataFrame(model_stats).sort_values(by='R2_adj', ascending=False).reset_index(drop=True)
+
+# 5. Barplot combiné (R² et Cp)
+plt.figure(figsize=(12, 0.6 * len(df_models)))
+y_pos = np.arange(len(df_models))
+
+bar_width = 0.4
+plt.barh(y_pos - bar_width/2, df_models['R2_adj'], height=bar_width, color='lightblue', edgecolor='black', label='Adjusted R²')
+plt.barh(y_pos + bar_width/2, df_models['Cp'], height=bar_width, color='#FEDA75', edgecolor='black', label='Mallow CP')
+
+# Affichage des valeurs
+for i, (r2, cp) in enumerate(zip(df_models['R2_adj'], df_models['Cp'])):
+    plt.text(r2 + 0.01, i - bar_width/2, f"{r2:.3f}", va='center')
+    plt.text(cp + 0.5, i + bar_width/2, f"{cp:.2f}", va='center')
+
+plt.yticks(y_pos, df_models['Variables'])
+plt.xlabel("Values")
+plt.title("Model comparison (3 best features selected with BORUTA)")
+plt.legend()
+plt.tight_layout()
+sns.despine(offset=2, trim=True)
+plt.show()
