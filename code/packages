@@ -47,3 +47,7 @@ from statsmodels.stats.anova import AnovaRM, anova_lm
 from statsmodels.formula.api import ols, mixedlm
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from statsmodels.stats.multitest import multipletests
+
+file_path_xlsx = '/content/data.xlsx'
+df = pd.read_excel(file_path_xlsx, sheet_name="dataset")
+print(df.head())
