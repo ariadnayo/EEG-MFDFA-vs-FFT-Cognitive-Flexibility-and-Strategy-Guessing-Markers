@@ -1,0 +1,53 @@
+#BORUTA Analysis
+df_copy = df.copy()
+df_X = df_copy.drop(df_copy.columns[[0, 10]], axis=1)
+y = df_copy.iloc[:, 10]
+
+# 2. Détection des variables catégorielles
+categorical_cols = df_X.select_dtypes(include=['object', 'category']).columns.tolist()
+numerical_cols = df_X.select_dtypes(include=[np.number]).columns.tolist()
+
+# 3. Encodage one-hot pour les variables catégorielles
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', 'passthrough', numerical_cols),
+        ('cat', OneHotEncoder(drop='first', sparse_output=False), categorical_cols)
+    ]
+)
+
+# 4. Pipeline avec RandomForest et Boruta
+X_encoded = preprocessor.fit_transform(df_X)
+feature_names = numerical_cols + list(preprocessor.named_transformers_['cat'].get_feature_names_out(categorical_cols))
+
+# Boruta attend une ndarray
+rf = RandomForestRegressor(n_jobs=-1, max_depth=15, min_samples_leaf=5, random_state=42)
+boruta = BorutaPy(estimator=rf, n_estimators='auto', verbose=0, random_state=42)
+boruta.fit(X_encoded, y)
+
+
+# 5. Récupération des résultats
+importances = boruta.ranking_
+selected = boruta.support_
+feature_importance = pd.DataFrame({
+    'Feature': feature_names,
+    'Rank': importances,
+    'Selected': selected
+}).sort_values(by='Rank', ascending=True)
+
+# 6. Visualisation
+plt.figure(figsize=(10, max(6, len(feature_importance) * 0.4)))
+bars = plt.barh(
+    feature_importance['Feature'],
+    feature_importance['Rank'],
+    edgecolor='black',
+    linewidth=0.8,
+    color=['forestgreen' if sel else 'red' for sel in feature_importance['Selected']]
+)
+
+plt.xlabel("Rank (Degree of importance)")
+plt.ylabel("Features")
+plt.title("Feature ranking (Boruta)")
+plt.gca().invert_yaxis()  # Inverser l'axe Y pour que le plus important soit en haut
+plt.tight_layout()
+sns.despine(offset=2, trim=True)
+plt.show()
